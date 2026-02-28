@@ -608,30 +608,24 @@ async function searchPitchers(query) {
     }));
 }
 /**
- * Fetch with CORS proxy fallback.
- * Tries direct first, then known CORS proxies.
+ * Fetch via CORS proxy.
+ * Goes directly to corsproxy.io (direct Baseball Savant requests always
+ * fail in-browser due to CORS, so skipping the wasted 20-second attempt).
  */
 async function fetchWithProxy(url) {
-  const attempts = [
-    url,
-    'https://corsproxy.io/?' + encodeURIComponent(url),
-  ];
-  for (const attemptUrl of attempts) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
-      const resp = await fetch(attemptUrl, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'PitchSequencingAnalyzer/1.0' }
-      });
-      clearTimeout(timeoutId);
-      if (resp.ok) {
-        const text = await resp.text();
-        if (text && text.length > 100) return text;
-      }
-    } catch (e) {
-      // try next proxy
+  const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (resp.ok) {
+      const text = await resp.text();
+      if (text && text.length > 100) return text;
     }
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw new Error('Unable to fetch data — proxy failed');
   }
   throw new Error('Unable to fetch data — all sources failed');
 }
@@ -656,20 +650,18 @@ function chunkDateRange(startDate, endDate) {
 }
 /**
  * Fetch Statcast pitch-by-pitch data from Baseball Savant.
- * Chunks date ranges into 30-day windows to avoid timeouts.
+ * Chunks date ranges into 30-day windows and fetches ALL chunks in
+ * parallel (Promise.all) instead of sequentially — dramatically faster.
  */
 async function fetchStatcastData(playerId, season, startDate, endDate) {
   const actualStart = startDate || (season + '-02-15');
-  const actualEnd = endDate || (season + '-11-30');
+  const actualEnd   = endDate   || (season + '-11-30');
   const chunks = chunkDateRange(actualStart, actualEnd);
-  const allRows = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    setLoadingText(
-      chunks.length > 1
-        ? `Fetching Statcast data (${i + 1}/${chunks.length})...`
-        : 'Fetching Statcast data...'
-    );
+
+  setLoadingText(`Fetching Statcast data (0/${chunks.length})...`);
+  let completed = 0;
+
+  const results = await Promise.all(chunks.map(async (chunk) => {
     const csvUrl = 'https://baseballsavant.mlb.com/statcast_search/csv'
       + '?player_type=pitcher'
       + '&player_id=' + playerId
@@ -678,15 +670,19 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
       + '&type=details&all=true';
     try {
       const csvText = await fetchWithProxy(csvUrl);
+      completed++;
+      setLoadingText(`Fetching Statcast data (${completed}/${chunks.length})...`);
       const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
-      if (parsed.data && parsed.data.length > 0) {
-        allRows.push(...parsed.data);
-      }
+      return (parsed.data && parsed.data.length > 0) ? parsed.data : [];
     } catch (e) {
       console.warn('Chunk fetch failed:', chunk, e);
+      completed++;
+      setLoadingText(`Fetching Statcast data (${completed}/${chunks.length})...`);
+      return [];
     }
-  }
-  return allRows;
+  }));
+
+  return results.flat();
 }
 /**
  * Look up catcher names from Statcast rows via MLB Stats API.
