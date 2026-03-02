@@ -253,6 +253,14 @@
     font-weight: 700;
     color: #ef4444;
   }
+  .stat-whiff {
+    font-weight: 600;
+    color: #f59e0b;
+  }
+  .stat-slg {
+    font-weight: 600;
+    color: #60a5fa;
+  }
   .no-patterns {
     font-size: 13px;
     color: #4a5568;
@@ -478,6 +486,8 @@
       <div class="stat-row"><span class="label">Total At-Bats</span><span class="value" id="totalAB">—</span></div>
       <div class="stat-row"><span class="label">Total Pitches</span><span class="value" id="totalPitches">—</span></div>
       <div class="stat-row"><span class="label">Pitches / AB</span><span class="value" id="pitchesPerAB">—</span></div>
+      <div class="stat-row"><span class="label">Whiff%</span><span class="value" id="whiffPct">—</span></div>
+      <div class="stat-row"><span class="label">SLG</span><span class="value" id="slgStat">—</span></div>
     </div>
     <div class="card" id="mixCard" style="display:none">
       <div class="card-title">Overall Pitch Mix</div>
@@ -796,7 +806,7 @@ function reprocessWithFilters() {
   }
   hideError();
   const tree = buildDecisionTree(atBats, minSample);
-  const patterns = findPatterns(tree);
+  const patterns = findPatterns(tree, atBats);
   const summary = computeSummary(atBats);
   const handLabel = handedness === 'L' ? 'vs LHH' : handedness === 'R' ? 'vs RHH' : '';
   const catcherLabel = catcherId !== 'all' ? 'w/ ' + (catcherMap[catcherId] || catcherId) : '';
@@ -849,9 +859,20 @@ function processAtBats(rows, handedness, catcherId) {
     groups[key].push({
       pitch_group: PITCH_GROUP[r.pitch_type.trim()] || 'Other',
       outcome: OUTCOME_GROUP[r.description.trim()] || 'Other',
+      events: (r.events || '').trim(),
     });
   }
-  return Object.values(groups).filter(seq => seq.length > 0);
+  return Object.values(groups).filter(seq => seq.length > 0).map(seq => {
+    const swingOuts = new Set(['Whiff', 'Foul', 'In Play']);
+    seq._swings = seq.filter(p => swingOuts.has(p.outcome)).length;
+    seq._misses = seq.filter(p => p.outcome === 'Whiff').length;
+    const last = seq[seq.length - 1];
+    const ev = last ? last.events : '';
+    const noAB = new Set(['walk','hit_by_pitch','sac_fly','sac_bunt','sac_fly_double_play','catcher_interf','intent_walk','']);
+    seq._totalBases = ({single:1,double:2,triple:3,home_run:4})[ev] || 0;
+    seq._isAB = !!(ev && !noAB.has(ev));
+    return seq;
+  });
 }
 /**
  * Build a pitch sequencing decision tree.
@@ -963,7 +984,7 @@ function buildDecisionTree(atBats, minSample, maxDepth) {
 /**
  * Scan the tree for predictable pitch sequences.
  */
-function findPatterns(tree, threshold, minCount, path) {
+function findPatterns(tree, atBats, threshold, minCount, path) {
   threshold = threshold || 60.0;
   minCount = minCount || 15;
   path = path || [];
@@ -988,9 +1009,23 @@ function findPatterns(tree, threshold, minCount, path) {
         depth: child.depth || 0,
         countStr: child.countStr || '',
         severity: child.pct >= 75 ? 'high' : 'medium',
+        whiff_pct: (() => {
+          const pitchSteps = currentPath.filter(s => s.type === 'pitch');
+          const m = (atBats || []).filter(seq => seq.length >= pitchSteps.length && pitchSteps.every((s, i) => seq[i] && seq[i].pitch_group === s.name));
+          const sw = m.reduce((a, b) => a + (b._swings || 0), 0);
+          const ms = m.reduce((a, b) => a + (b._misses || 0), 0);
+          return sw > 0 ? Math.round(ms / sw * 1000) / 10 : null;
+        })(),
+        slg: (() => {
+          const pitchSteps = currentPath.filter(s => s.type === 'pitch');
+          const m = (atBats || []).filter(seq => seq.length >= pitchSteps.length && pitchSteps.every((s, i) => seq[i] && seq[i].pitch_group === s.name));
+          const tb = m.reduce((a, b) => a + (b._totalBases || 0), 0);
+          const ab = m.filter(b => b._isAB).length;
+          return ab > 0 ? Math.round(tb / ab * 1000) / 1000 : null;
+        })(),
       });
     }
-    patterns.push(...findPatterns(child, threshold, minCount, currentPath));
+    patterns.push(...findPatterns(child, atBats, threshold, minCount, currentPath));
   }
   patterns.sort((a, b) => (b.pct - a.pct) || (b.count - a.count));
   return patterns.slice(0, 25);
@@ -1025,6 +1060,16 @@ function computeSummary(atBats) {
     avg_pitches_per_ab: Math.round(totalPitches / atBats.length * 100) / 100,
     pitch_mix: pitchMixPct,
     first_pitch_mix: fpMixPct,
+    whiff_pct: (() => {
+      const s = atBats.reduce((a, b) => a + (b._swings || 0), 0);
+      const m = atBats.reduce((a, b) => a + (b._misses || 0), 0);
+      return s > 0 ? Math.round(m / s * 1000) / 10 : null;
+    })(),
+    slg: (() => {
+      const tb = atBats.reduce((a, b) => a + (b._totalBases || 0), 0);
+      const ab = atBats.filter(b => b._isAB).length;
+      return ab > 0 ? Math.round(tb / ab * 1000) / 1000 : null;
+    })(),
   };
 }
 // =====================================================================
@@ -1243,6 +1288,10 @@ function renderProfile(summary, meta) {
   document.getElementById('totalAB').textContent = summary.total_at_bats.toLocaleString();
   document.getElementById('totalPitches').textContent = summary.total_pitches.toLocaleString();
   document.getElementById('pitchesPerAB').textContent = summary.avg_pitches_per_ab;
+  const wEl = document.getElementById('whiffPct');
+  const sEl = document.getElementById('slgStat');
+  if (wEl) wEl.textContent = summary.whiff_pct != null ? summary.whiff_pct + '%' : '—';
+  if (sEl) sEl.textContent = summary.slg != null ? '.' + String(Math.round(summary.slg * 1000)).padStart(3, '0') : '—';
 }
 function renderPitchMix(mix, barId, legendId) {
   const bar = document.getElementById(barId);
@@ -1279,6 +1328,8 @@ function renderPatterns(patterns) {
       + '<span class="pattern-pct">' + p.pct + '%</span>'
       + '<span>n=' + p.count + '</span>'
       + '<span>Count: ' + p.countStr + '</span>'
+      + (p.whiff_pct !== null && p.whiff_pct !== undefined ? '<span class="stat-whiff">Whiff: ' + p.whiff_pct + '%</span>' : '')
+      + (p.slg !== null && p.slg !== undefined ? '<span class="stat-slg">SLG: .' + String(Math.round(p.slg * 1000)).padStart(3, '0') + '</span>' : '')
       + '</div>';
     list.appendChild(div);
   });
