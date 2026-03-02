@@ -625,7 +625,7 @@ async function fetchWithProxy(url) {
       clearTimeout(timeoutId);
       if (resp.ok) {
         const text = await resp.text();
-        if (text && text.length > 100) return text;
+        if (text && text.length > 50 && !text.trimStart().startsWith('<') && text.includes(',')) return text;
       }
     } catch (e) {
       clearTimeout(timeoutId);
@@ -685,11 +685,19 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
 
   const results = await Promise.all(chunks.map(chunk => limited(async () => {
     const csvUrl = 'https://baseballsavant.mlb.com/statcast_search/csv'
-      + '?player_type=pitcher'
-      + '&player_id=' + playerId
-      + '&game_date_gt=' + chunk.start
-      + '&game_date_lt=' + chunk.end
-      + '&type=details&all=true';
+              + '?all=true'
+              + '&type=details'
+              + '&player_type=pitcher'
+              + '&pitchers_lookup%5B%5D=' + playerId
+              + '&hfSea=' + season + '%7C'
+              + '&hfGT=R%7CPO%7CS%7C'
+              + '&game_date_gt=' + chunk.start
+              + '&game_date_lt=' + chunk.end
+              + '&min_pitches=0'
+              + '&min_results=0'
+              + '&group_by=name'
+              + '&sort_col=pitches'
+              + '&sort_order=desc';
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
