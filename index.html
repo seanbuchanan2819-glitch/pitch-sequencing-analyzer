@@ -705,12 +705,11 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
               + '&pitchers_lookup%5B%5D=' + playerId
               + '&hfSea=' + season + '%7C'
               + '&hfGT=R%7CPO%7CS%7C'
-              + '&hfLevel=MLB%7CAAA%7CAA%7CAHi%7CALo%7C'
+              + '&hfLevel=mlb%7Caaa%7Caa%7Ca-plus%7Ca%7C'
               + '&game_date_gt=' + chunk.start
               + '&game_date_lt=' + chunk.end
               + '&min_pitches=0'
               + '&min_results=0'
-              + '&group_by=name'
               + '&sort_col=pitches'
               + '&sort_order=desc';
 
@@ -721,10 +720,13 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
         setLoadingText(`Fetching Statcast data (${completed}/${chunks.length})...`);
         const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
         if (!parsed.data || parsed.data.length === 0) return [];
+        console.log(`Chunk ${chunk.start}→${chunk.end}: ${parsed.data.length} rows raw. Columns: ${Object.keys(parsed.data[0] || {}).slice(0,8).join(', ')}`);
         // Guard against Baseball Savant ignoring the pitcher filter and returning
         // all team pitches — keep only rows belonging to the requested pitcher.
         const pid = String(playerId);
-        return parsed.data.filter(r => String(r.pitcher || '').trim() === pid);
+        const filtered = parsed.data.filter(r => String(r.pitcher || '').trim() === pid);
+        console.log(`Chunk ${chunk.start}→${chunk.end}: ${filtered.length} rows after pitcher filter (id=${pid})`);
+        return filtered;
       } catch (e) {
         if (attempt === 1) {
           console.warn('Chunk failed after retry:', chunk, e);
