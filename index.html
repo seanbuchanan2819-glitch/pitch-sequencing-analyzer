@@ -1083,14 +1083,12 @@ function computeSummary(atBats) {
 (function init() {
   // Populate season dropdown (current year down to 2015)
   const seasonSel = document.getElementById('seasonSelect');
-  const currentYear = new Date().getFullYear();
-  for (let y = currentYear; y >= 2015; y--) {
-    const opt = document.createElement('option');
-    opt.value = y;
-    opt.textContent = y;
-    if (y === currentYear - 1) opt.selected = true;
-    seasonSel.appendChild(opt);
-  }
+  const opt = document.createElement('option');
+  opt.value = 2026;
+  opt.textContent = 2026;
+  opt.selected = true;
+  seasonSel.appendChild(opt);
+  seasonSel.disabled = true;
   // Search input
   const searchInput = document.getElementById('searchInput');
   searchInput.addEventListener('input', onSearchInput);
