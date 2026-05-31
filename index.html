@@ -626,22 +626,26 @@ async function fetchWithProxy(url) {
   const proxies = [
     'https://corsproxy.io/?' + encodeURIComponent(url),
     'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    'https://corsproxy.io/?' + encodeURIComponent(url),  // retry corsproxy.io once more
   ];
   for (const proxyUrl of proxies) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 18000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     try {
       const resp = await fetch(proxyUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (resp.ok) {
         const text = await resp.text();
-        if (text && text.length > 50 && !text.trimStart().startsWith('<') && text.includes(',')) return text;
+        // Accept CSV (has commas) or an empty-but-valid response (header-only CSV)
+        if (text && text.length > 10 && !text.trimStart().startsWith('<')) {
+          if (text.includes(',') || text.trim().length === 0) return text;
+        }
       }
     } catch (e) {
       clearTimeout(timeoutId);
     }
   }
-  throw new Error('Unable to fetch data — all proxies failed');
+  throw new Error('Unable to fetch data — all proxies failed. Baseball Savant may be temporarily unavailable.');
 }
 /**
  * Chunk a date range into ~30-day windows for Baseball Savant.
@@ -652,7 +656,7 @@ function chunkDateRange(startDate, endDate) {
   const end = new Date(endDate + 'T00:00:00');
   while (current < end) {
     const chunkEnd = new Date(current);
-    chunkEnd.setDate(chunkEnd.getDate() + 30);
+    chunkEnd.setDate(chunkEnd.getDate() + 60);
     if (chunkEnd > end) chunkEnd.setTime(end.getTime());
     chunks.push({
       start: current.toISOString().split('T')[0],
@@ -676,7 +680,7 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
   let completed = 0;
 
   // Sliding-window concurrency limiter — at most 4 requests in-flight at once
-  const MAX_CONCURRENT = 4;
+  const MAX_CONCURRENT = 2;
   let active = 0;
   const queue = [];
   function runNext() {
